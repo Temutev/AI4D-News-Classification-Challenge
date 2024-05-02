@@ -5,8 +5,12 @@ import matplotlib.pyplot as plt
 import joblib
 import nltk ,string ,re
 from scipy.sparse import hstack
-
+from nltk.tokenize import sent_tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer
 st.set_option('deprecation.showPyplotGlobalUse', False)
+vectorizer = TfidfVectorizer(max_features=3000)
+modell = joblib.load('lgbm_model-01.joblib')
+
 sw_stopwords=["akasema","alikuwa","alisema","baada","basi","bila","cha","chini","hadi",
               "hapo","hata","hivyo","hiyo","huku","huo","ili","ilikuwa","juu","kama","karibu",
               "katika","kila","kima","kisha","kubwa","kutoka","kuwa","kwa","kwamba","kwenda","kwenye","la","lakini",
@@ -42,13 +46,13 @@ sw_stopwords=["akasema","alikuwa","alisema","baada","basi","bila","cha","chini",
 tokenizer = nltk.tokenize.RegexpTokenizer(r'\w+')
 
 #load joblib models
-stacking_model = joblib.load('stacking_model.pkl')
-voting_model = joblib.load('voting_model.pkl')
-tfidf = joblib.load('tfidf.pkl')
+#stacking_model = joblib.load('stacking_model.pkl')
+#voting_model = joblib.load('voting_model.pkl')
+tfidf = joblib.load('vectorizer_mo.joblib')
 
 # Load the data
 train = pd.read_csv('Train.csv')
-model_performance = pd.read_csv('model_performance.csv')
+model_performance = pd.read_csv('model_results.csv')
 
 def clean_text(text):
     '''Make text lowercase, remove text in square brackets,remove links,remove punctuation
@@ -92,7 +96,7 @@ def preprocess_user_input(user_input):
     # Combine text
     combined_text = combine_text(words)
     
-    return [combined_text]
+    return combined_text
 
 # Function to display category distribution chart
 def display_category_distribution():
@@ -111,20 +115,25 @@ def display_model_performance():
 # Function to provide explanation on model performance
 def explain_model_performance():
     st.write("Model Comparison and Explanation:")
-    st.write("- Logistic Regression and CatBoostClassifier performed relatively well compared to other models, possibly due to their ability to handle text data effectively.")
+    st.write("- Logistic Regression ,LGBMClassifier and CatBoostClassifier performed relatively well compared to other models, possibly due to their ability to handle text data effectively.")
     st.write("- Decision Tree Classifier had low accuracy and high log loss, indicating overfitting on the training data.")
-    st.write("- Ensemble techniques like Voting Classifier and Stacking Classifier improved overall performance by combining predictions from multiple models.")
+    #st.write("- Ensemble techniques like Voting Classifier and Stacking Classifier improved overall performance by combining predictions from multiple models.")
 
 # Function to make prediction based on user input
-def make_prediction(user_input, model_option):
-    if model_option == 'StackingClassifier':
-        prediction = stacking_model.predict([user_input])[0]
-        probability = stacking_model.predict_proba([user_input])[0]
-    elif model_option == 'VotingClassifier':
-        prediction = voting_model.predict([user_input])[0]
-        probability = voting_model.predict_proba([user_input])[0]
-        
-    return prediction, probability
+def make_prediction(user_input):
+    #take user input 
+    input = preprocess_user_input(user_input)
+    # Vectorize the user input
+    #user_input_vectorized = tfidf.transform(input)
+    #vectorizer.fit([input])
+    sparse_matrix = tfidf.transform([input])
+
+    preds = modell.predict_proba(sparse_matrix)
+    
+    labels = ['Kitaifa', 'Michezo', 'Biashara', 'Kimataifa', 'Burudani']
+    preds = pd.DataFrame(preds, columns=labels)
+    
+    return preds
 
     # Placeholder code for prediction
     #prediction = "Politics"
@@ -137,7 +146,7 @@ def main():
 
     st.sidebar.title("Explore")
 
-    page = st.sidebar.radio("Navigate", ["Home", "Model Performance", "Further Research"])
+    page = st.sidebar.radio("Navigate", ["Home", "Model Performance","Make Prediction", "Further Research",])
 
     if page == "Home":
         st.write("This application classifies Swahili news articles into different categories such as Politics, Sports, and Entertainment.")
@@ -161,89 +170,85 @@ def main():
                 """
         st.code(mapped_code, language='python')
 
-        st.write("We generated new features .Here is the code: ")
-        feature_code = """
-        #calculate word count for each text
-        train['word_count'] = train['content'].apply(lambda x: len(x.split()))
-
-        #Calculate average word length
-        train['avg_word_length'] = train['content'].apply(lambda x: np.mean([len(word) for word in x.split()]))
-
-
-        #Calculate word count for each text
-        test['word_count'] = test['content'].apply(lambda x: len(x.split()))
-
-        #Calculate average word length
-        test['avg_word_length'] = test['content'].apply(lambda x: np.mean([len(word) for word in x.split()]))
-                
-        """
-        st.code(feature_code, language='python')
+        
         
         st.write("The following section outlines code we used to preprocess the text data: ")
         preprocess_code = """
-        def clean_text(text):
-            '''Make text lowercase, remove text in square brackets,remove links,remove punctuation
+        def text_cleaning(text):
+            '''Make text lowercase, remove text in square brackets, remove links, remove punctuation,
             and remove words containing numbers.'''
+            # Convert text to lowercase
             text = text.lower()
-            text = re.sub(' ', '', text)
-            text = re.sub('https?://\S+|www\.\S+', '', text)
-            text = re.sub('<.*?>+', '', text)
-            text = re.sub('[%s]' % re.escape(string.punctuation), '', text)
+            # Remove text in square brackets
+            text = re.sub(r'\[.*?\]', '', text)
+            # Remove links
+            text = re.sub(r'https?://\S+|www\.\S+', '', text)
+            # Remove HTML tags
+            text = re.sub(r'<.*?>', '', text)
+            # Remove punctuation except for spaces
+            text = re.sub(r'[^\w\s]', '', text)
+            # Remove words containing numbers
+            text = re.sub(r'\w*\d\w*', '', text)
             return text
 
 
-        # Applying the cleaning function to both test and training datasets
-        train['content'] = train['content'].apply(lambda x: clean_text(x))
-        test['content'] = test['content'].apply(lambda x: clean_text(x))
+        # Apply text cleaning to the 'content' column of the dataset
+        df['content_cleaned'] = df['content'].apply(text_cleaning)
+        sampled_records['content_cleaned'] = sampled_records['content'].apply(text_cleaning)
         
         
-        def remove_err(text):
-            text = text.replace('â€™', "")
-            text = text.replace('â€œ', "")
-            text = text.replace('â€', "")
-            text = text.replace('â€˜', "")
-            text = text.replace('â€”', "")
-            text = text.replace('â€“', "")
-            text = text.replace('â€¢', "")
-            text = text.replace('â€¦', "")
-            text = re.sub(r'^â€˜(.*?)â€™$', '', text)
-            text = re.sub(r'^â€œ(.*?)â€', '', text)
-            return text
+        
+        # Define the basic token pattern
+        basic_token_pattern = r"(?u)\b\w\w+\b"
 
+        # Tokenize the text using NLTK's word_tokenize function
+        def tokenize_text(text):
+            if isinstance(text, str):
+                return word_tokenize(text)
+            else:
+                return []
 
-        # Applying the cleaning function to both test and training datasets
-        train['content'] = train['content'].apply(lambda x: remove_err(x))
-        test['content'] = test['content'].apply(lambda x: remove_err(x))
+        # Tokenize the 'content_cleaned' column in the DataFrame
+        df['tokens'] = df['content_cleaned'].apply(tokenize_text)
+        sampled_records['tokens'] = sampled_records['content_cleaned'].apply(tokenize_text)
+        df.head()
 
-        
-        # Tokenizing the training and the test set
-        tokenizer = nltk.tokenize.RegexpTokenizer(r'\w+')
-        train['content'] = train['content'].apply(lambda x: tokenizer.tokenize(x))
-        test['content'] = test['content'].apply(lambda x: tokenizer.tokenize(x))
-        
-        def remove_stopwords(text):
-            words = [w for w in text if w not in sw_stopwords]
-            return words
-
-        train['content'] = train['content'].apply(lambda x : remove_stopwords(x))
-        test['content'] = test['content'].apply(lambda x : remove_stopwords(x))
-        
         """
         st.code(preprocess_code, language='python')
         
         st.write("We further used TF-IDF to vectorize the text data. Here is the code: ")
         tfidf_code = """
-        tfidf = TfidfVectorizer(min_df=15, max_df=0.5, ngram_range=(1, 2),norm='l2',sublinear_tf=True)
-        train_vectors = tfidf.fit_transform(train['content'])
-        test_vectors = tfidf.transform(test["content"])
+        # Creating a TF-IDF vectorizer
+        vectorizer = TfidfVectorizer()
+        vectorizer.fit(X_train)
+        X_train_tf = vectorizer.transform(X_train)
         
-        
-        # Concatenate TF-IDF vectors with new features
-        X_train_combined = hstack((train_vectors, train[['word_count', 'avg_word_length']].values))
-        X_test_combined = hstack((test_vectors, test[['word_count', 'avg_word_length']].values))
+        # Convert TF-IDF matrix to a dense array
+        X_train_tf = X_train_tf.toarray()
+
+        # Get the shape of the TF-IDF matrix
+        X_train_tf.shape
+
+
         """
         st.code(tfidf_code, language='python')
-        
+        st.write("We removed stopwords to improve our models ")
+        stopwords_code =""" 
+        def remove_stopwords(token_list):
+            stopwords_removed = [token for token in token_list if token not in sw_stopwords]
+            return stopwords_removed
+
+        tokens_example = df.iloc[100]["tokens"]
+        print("Length with stopwords:", len(tokens_example))
+
+
+        tokens_example_without_stopwords = remove_stopwords(tokens_example)
+        print("Length without stopwords:", len(tokens_example_without_stopwords))
+        df["text_without_stopwords"] = df["tokens"].apply(remove_stopwords)
+        """
+        st.code(stopwords_code,language="python")
+        #load an image
+        st.image("word_freq_without_stopwords.png", caption="Word Frequencies", use_column_width=True)
         st.write("With this preprocessing, we were able to train and evaluate different models to classify news articles into different categories. Let's explore the model performance next!")
     elif page == "Model Performance":
         st.write("We evaluated the performance of different models using accuracy and log loss metrics. Here are the results:")
@@ -255,6 +260,24 @@ def main():
         st.write("- Feature engineering to extract more meaningful features from the text data.")
         st.write("- Exploring advanced deep learning models like LSTM and BERT for text classification.")
         st.write("Feel free to explore the data, model performance, and make predictions using the sidebar!")
+    elif page =="Make Prediction":
+        st.write("Enter a news article to predict its category.")
+        user_input = st.text_area("Enter News Article:")
+        
+        #check if user input is empty
+        if not user_input:
+            st.warning("Please enter a news article to make a prediction.")
+            return
+        
+        # add button to make prediction
+        if st.button("Predict"):
+            prediction = make_prediction(user_input)
+            st.write("Prediction Probabilities:")
+            st.write(prediction)
+            #st.write(f"Prediction: {prediction}")
+            #st.write(f"Probability: {probability}")
+        
+        
     else:
         st.write("Invalid page selection. Please select a valid page from the sidebar.")
         
